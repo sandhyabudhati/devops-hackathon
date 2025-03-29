@@ -1,52 +1,52 @@
-DOCKERFILE_LOCATION=./deploy/Dockerfile
-DOCKERCOMPOSE_LOCATION=deploy/docker-compose-local.yaml
-SERVICE_NAME=coi-ai-tasks-service
-IMAGE_TAG ?= latest
+# Variables
+AWS_REGION = us-east-1
+ECR_REPO_PATIENT = patient-service
+ECR_REPO_APPOINTMENT = appointment-service
+PATIENT_SERVICE_IMAGE = patient-service
+APPOINTMENT_SERVICE_IMAGE = appointment-service
+PATIENT_SERVICE_TAG = prodpatient
+APPOINTMENT_SERVICE_TAG = prodappointment
 
-# AWS Envs
-AWS_ECR_NAME=723078827062.dkr.ecr.us-east-1.amazonaws.com
-AWS_ECR_URL=$(AWS_ECR_NAME)/$(SERVICE_NAME)
-REGION=us-east-1
-PROFILE=coi-e2x
+# AWS CLI and Docker commands
+ECR_URI_PATIENT = $(ECR_REPO_PATIENT).dkr.ecr.$(AWS_REGION).amazonaws.com
+ECR_URI_APPOINTMENT = $(ECR_REPO_APPOINTMENT).dkr.ecr.$(AWS_REGION).amazonaws.com
 
+# Authenticate to AWS ECR
+aws-ecr-login:
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(ECR_URI_PATIENT)
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(ECR_URI_APPOINTMENT)
 
-login:
-	@aws ecr get-login-password --profile $(PROFILE) --region $(REGION) | docker login --username AWS --password-stdin $(AWS_ECR_NAME)
+# Build Docker images
+build-patient-service:
+	docker build -t $(PATIENT_SERVICE_IMAGE) ./patient-service
 
-create_repo:
-	@aws ecr create-repository --repository-name $(SERVICE_NAME) --profile $(PROFILE) --region $(REGION) > /dev/null
+build-appointment-service:
+	docker build -t $(APPOINTMENT_SERVICE_IMAGE) ./appointment-service
 
-build:
-	@docker build -f $(DOCKERFILE_LOCATION) --no-cache -t $(SERVICE_NAME) .
+# Tag Docker images for AWS ECR
+tag-patient-service:
+	docker tag $(PATIENT_SERVICE_IMAGE):$(PATIENT_SERVICE_TAG) $(ECR_URI_PATIENT)/$(ECR_REPO_PATIENT):$(PATIENT_SERVICE_TAG)
 
-tag:
-	@docker tag $(SERVICE_NAME):latest $(AWS_ECR_URL):$(IMAGE_TAG)
+tag-appointment-service:
+	docker tag $(APPOINTMENT_SERVICE_IMAGE):$(APPOINTMENT_SERVICE_TAG) $(ECR_URI_APPOINTMENT)/$(ECR_REPO_APPOINTMENT):$(APPOINTMENT_SERVICE_TAG)
 
-push:
-	@docker push $(AWS_ECR_URL):$(IMAGE_TAG)
+# Push Docker images to AWS ECR
+push-patient-service:
+	docker push $(ECR_URI_PATIENT)/$(ECR_REPO_PATIENT):$(PATIENT_SERVICE_TAG)
 
-run:
-	@docker run $(SERVICE_NAME):$(IMAGE_TAG)
+push-appointment-service:
+	docker push $(ECR_URI_APPOINTMENT)/$(ECR_REPO_APPOINTMENT):$(APPOINTMENT_SERVICE_TAG)
 
-update_docker_image: build tag push
+# Build, tag, and push both services to ECR
+push-all:
+	$(MAKE) build-patient-service
+	$(MAKE) build-appointment-service
+	$(MAKE) aws-ecr-login
+	$(MAKE) tag-patient-service
+	$(MAKE) tag-appointment-service
+	$(MAKE) push-patient-service
+	$(MAKE) push-appointment-service
 
-
-# Commands for the local development
-
-start_local_services:
-	@echo ">> Launch Localstack and MySQL database in containers"
-	@docker compose -f $(DOCKERCOMPOSE_LOCATION) up -d
-	@sleep 20
-
-db_restore:
-	@cat $(DB_DUMP_PATH) | docker exec -i $(DB_CONTAINER_NAME) /usr/bin/mysql -u $(DB_USER) --password=$(DB_PASWORD) $(DB_NAME)
-
-
-cluster_start: start_local_services db_restore
-
-cluster_stop:
-	@echo ">>> Stopping cluster"
-	@docker compose -f $(DOCKERCOMPOSE_LOCATION) down --remove-orphans
-
-cluster_restart: cluster_stop cluster_start
-
+# Optional: Clean up Docker images locally
+clean:
+	docker system prune -f
